@@ -1718,7 +1718,7 @@ if __name__ == "__main__":
     print("\nOffsite results with ResNet18, training full model:\n")
 
     model_task22 = train_test_task2(backbone, train_csv, val_csv, test_csv, train_image_dir, val_image_dir,
-        test_image_dir, epochs=30, batch_size=8, img_size=256, pretrained_backbone=pretrained_backbone, loss="focal")
+        test_image_dir, epochs=30, batch_size=32, img_size=256, pretrained_backbone=pretrained_backbone, loss="focal")
 
     torch.save(model_task22.state_dict(), "/content/drive/MyDrive/final_project_resources/saved_models/best_resnet18_task22.pt")
 
@@ -1727,7 +1727,7 @@ if __name__ == "__main__":
     print("\nOffsite results with EfficientNet, training full model:\n")
 
     model_task22 = train_test_task2(backbone, train_csv, val_csv, test_csv, train_image_dir, val_image_dir,
-        test_image_dir, epochs=30, batch_size=16, img_size=256, pretrained_backbone=pretrained_backbone)
+        test_image_dir, epochs=30, batch_size=32, img_size=256, pretrained_backbone=pretrained_backbone)
 
     torch.save(model_task22.state_dict(), "/content/drive/MyDrive/final_project_resources/saved_models/best_efficientnet_task22.pt")
 
