@@ -2,12 +2,14 @@ import os
 import pandas as pd
 import numpy as np
 import shutil
+import random
 from PIL import Image
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+import torchvision.transforms.functional as TF
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, models
 from torchvision.utils import save_image
@@ -500,11 +502,254 @@ def train_test_task13(backbone, train_csv, val_csv, test_csv, train_image_dir, v
 
 # TASK 2
 
-# Functions for task 2
-# ...
+# Focal loss class for task 2.1
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=0.25, gamma=2.0, reduction="mean"):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, logits, targets):
+        """
+        logits: (B, C)
+        targets: (B, C)
+        """
+
+        # BCE per element
+        bce = F.binary_cross_entropy_with_logits(
+            logits, targets, reduction="none"
+        )
+
+        probs = torch.sigmoid(logits)
+        p_t = probs * targets + (1 - probs) * (1 - targets)
+        alpha_t = targets * self.alpha + (1 - targets) * (1 - self.alpha)
+
+        focal_weight = alpha_t * ((1 - p_t) ** self.gamma)
+        loss = focal_weight * bce
+
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        else:
+            return loss
 
 
+# Class-balanced BCE loss for task 2.2
+class ClassBalancedBCELoss(nn.Module):
+    def __init__(self, pos_weights):
+        """
+        pos_weights: tensor of shape (num_classes,)
+                     calculated as num_negative / num_positive for each class
+        """
+        super().__init__()
+        self.pos_weights = pos_weights
 
+    def forward(self, logits, targets):
+        """
+        logits: (B, C) - raw model outputs
+        targets: (B, C) - binary labels
+        """
+        # Use PyTorch's built-in weighted BCE loss
+        loss = F.binary_cross_entropy_with_logits(
+            logits,
+            targets,
+            pos_weight=self.pos_weights,
+            reduction='mean'
+        )
+        return loss
+
+# model training and val for task 2.1 and 2.2
+def train_test_task2(backbone, train_csv, val_csv, test_csv, train_image_dir, val_image_dir, test_image_dir,
+                       epochs=10, batch_size=32, img_size=256, save_dir="checkpoints", pretrained_backbone=None, loss="focal", alpha=0.25, gamma=2.0):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    train_transform = transforms.Compose([
+        transforms.Resize((img_size, img_size)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomRotation(10),
+        transforms.ColorJitter(
+            brightness=0.0,
+            contrast=0.2,
+            saturation=0.1,
+            hue=0.02
+        ),
+        transforms.RandomApply([
+          transforms.Lambda(
+            lambda x: TF.adjust_gamma(x, gamma=random.uniform(0.9, 1.1))
+          )
+        ], p=0.3),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        ),
+    ])
+
+    val_test_transform = transforms.Compose([
+        transforms.Resize((img_size, img_size)),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        ),
+    ])
+
+    # dataset & dataloader
+    train_ds = RetinaMultiLabelDataset(train_csv, train_image_dir, train_transform)
+    val_ds   = RetinaMultiLabelDataset(val_csv, val_image_dir, val_test_transform)
+    test_ds  = RetinaMultiLabelDataset(test_csv, test_image_dir, val_test_transform)
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2)
+    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=2)
+    test_loader  = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=2)
+
+    # model
+    model = build_model(backbone, num_classes=3, pretrained=False).to(device)
+
+    for p in model.parameters():
+        p.requires_grad = True
+
+    # training
+    best_val_loss = float("inf")
+    os.makedirs(save_dir, exist_ok=True)
+    ckpt_path = os.path.join(save_dir, f"best_{backbone}.pt")
+
+    # load pretrained backbone
+    if pretrained_backbone is not None:
+        state_dict = torch.load(pretrained_backbone, map_location="cpu")
+        model.load_state_dict(state_dict)
+
+    train_labels = pd.read_csv(train_csv).iloc[:, 1:].values  # shape (N, 3)
+
+
+    num_pos = train_labels.sum(axis=0)
+    num_neg = len(train_labels) - num_pos
+
+    pos_weight = num_neg / num_pos
+    print("pos_weight:", pos_weight)
+    pos_weight = torch.tensor(pos_weight, dtype=torch.float32).to(device) ## Added
+
+    # loss & optimizer
+    if loss == "focal":
+      criterion = FocalLoss(alpha=alpha, gamma=gamma)
+    else:
+      criterion = ClassBalancedBCELoss(pos_weights=pos_weight)
+
+
+    if pretrained_backbone is not None:
+        if backbone == "resnet18":
+            optimizer = optim.AdamW([
+                {"params": model.fc.parameters(), "lr": 1e-6},
+                {"params": [p for n, p in model.named_parameters() if "fc" not in n], "lr": 1e-4}
+            ], weight_decay=1e-4)
+        elif backbone == "efficientnet":
+            optimizer = optim.AdamW([
+                {"params": model.classifier.parameters(), "lr": 1e-6},
+                {"params": [p for n, p in model.named_parameters() if "classifier" not in n], "lr": 1e-4}
+            ], weight_decay=1e-4)
+
+    # Scheduler (Cosine Annealing)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=epochs,
+        eta_min=1e-7
+    )
+
+    label_smoothing = 0.05
+ 
+    epochs_no_improve = 0
+    for epoch in range(epochs):
+        model.train()
+        train_loss = 0
+        for imgs, labels in train_loader:
+            imgs, labels = imgs.to(device), labels.to(device)
+            labels = labels * (1 - label_smoothing) + 0.5 * label_smoothing
+            optimizer.zero_grad()
+            outputs = model(imgs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item() * imgs.size(0)
+
+        train_loss /= len(train_loader.dataset)
+
+        # validation
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for imgs, labels in val_loader:
+                imgs, labels = imgs.to(device), labels.to(device)
+                outputs = model(imgs)
+                loss = criterion(outputs, labels)
+                val_loss += loss.item() * imgs.size(0)
+        val_loss /= len(val_loader.dataset)
+
+        current_lrs = [pg["lr"] for pg in optimizer.param_groups]
+
+        print(f"[{backbone}] Epoch {epoch+1}/{epochs} Train Loss: {train_loss:.4f} Val Loss: {val_loss:.4f} LRs: {current_lrs}")
+
+        scheduler.step()
+
+        # save best
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+
+        torch.save(model.state_dict(), ckpt_path)
+        print(f"Saved best model for {backbone} at {ckpt_path}")
+
+        if epochs_no_improve >= 30:
+            print(f"Early stopping triggered at epoch {epoch+1}")
+            break
+
+    # testing
+    if epochs == 0:
+        print("Loading pretrained backbone for Task 1.1 (skipping checkpoint).")
+        model.load_state_dict(torch.load(pretrained_backbone, map_location=device))
+    else:
+        print("Loading best checkpoint from training.")
+        model.load_state_dict(torch.load(ckpt_path, map_location=device))
+    model.eval()
+    y_true, y_pred = [], []
+
+    thresholds = [0.4, 0.45, 0.4]
+
+    with torch.no_grad():
+        for imgs, labels in test_loader:
+            imgs = imgs.to(device)
+            outputs = model(imgs)
+            probs = torch.sigmoid(outputs).cpu().numpy()
+            preds = (probs > thresholds).astype(int)
+            y_true.extend(labels.numpy())
+            y_pred.extend(preds)
+
+    y_true = torch.tensor(y_true).numpy()
+    y_pred = torch.tensor(y_pred).numpy()
+
+    disease_names = ["DR", "Glaucoma", "AMD"]
+
+    for i, disease in enumerate(disease_names):  #compute metrics for every disease
+        y_t = y_true[:, i]
+        y_p = y_pred[:, i]
+
+        acc = accuracy_score(y_t, y_p)
+        precision = precision_score(y_t, y_p, average="macro",zero_division=0)
+        recall = recall_score(y_t, y_p, average="macro",zero_division=0)
+        f1 = f1_score(y_t, y_p, average="macro",zero_division=0)
+        kappa = cohen_kappa_score(y_t, y_p)
+
+        print(f"{disease} Results [{backbone}]")
+        print(f"Accuracy : {acc:.4f}")
+        print(f"Precision: {precision:.4f}")
+        print(f"Recall   : {recall:.4f}")
+        print(f"F1-score : {f1:.4f}")
+        print(f"Kappa    : {kappa:.4f}")
+
+    return model
 
 
 
@@ -1435,11 +1680,70 @@ if __name__ == "__main__":
     )
 
     # Task 2.1
-    # ...
-    
+    pretrained_backbone = '/content/drive/MyDrive/final_project_resources/pretrained_backbone/ckpt_resnet18_ep50.pt'
+    backbone = 'resnet18'
+    print("\nOffsite results with ResNet18, training full model:\n")
 
+    model_task21 = train_test_task2(backbone, train_csv, val_csv, test_csv, train_image_dir, val_image_dir,
+        test_image_dir, epochs=30, batch_size=8, img_size=256, pretrained_backbone=pretrained_backbone, loss="focal")
 
+    torch.save(model_task21.state_dict(), "/content/drive/MyDrive/final_project_resources/saved_models/best_resnet18_task21.pt")
 
+    pretrained_backbone = '/content/drive/MyDrive/final_project_resources/pretrained_backbone/ckpt_efficientnet_ep50.pt'
+    backbone = 'efficientnet'
+    print("\nOffsite results with EfficientNet, training full model:\n")
+
+    model_task21 = train_test_task2(backbone, train_csv, val_csv, test_csv, train_image_dir, val_image_dir,
+        test_image_dir, epochs=30, batch_size=16, img_size=256, pretrained_backbone=pretrained_backbone)
+
+    torch.save(model_task21.state_dict(), "/content/drive/MyDrive/final_project_resources/saved_models/best_efficientnet_task21.pt")
+
+    generate_onsite_result_task13(
+        backbone="resnet18",
+        checkpoint_path="/content/drive/MyDrive/final_project_resources/saved_models/best_resnet18_task21.pt",
+        onsite_loader=generate_onsite_loader(),
+        output_csv="/content/drive/MyDrive/final_project_resources/submissions/pred_task21_resnet18.csv"
+    )
+
+    generate_onsite_result_task13(
+        backbone="efficientnet",
+        checkpoint_path="/content/drive/MyDrive/final_project_resources/saved_models/best_efficientnet_task21.pt",
+        onsite_loader=generate_onsite_loader(),
+        output_csv="/content/drive/MyDrive/final_project_resources/submissions/pred_task21_efficientnet.csv"
+    )
+
+    # Task 2.2
+    pretrained_backbone = '/content/drive/MyDrive/final_project_resources/pretrained_backbone/ckpt_resnet18_ep50.pt'
+    backbone = 'resnet18'
+    print("\nOffsite results with ResNet18, training full model:\n")
+
+    model_task22 = train_test_task2(backbone, train_csv, val_csv, test_csv, train_image_dir, val_image_dir,
+        test_image_dir, epochs=30, batch_size=8, img_size=256, pretrained_backbone=pretrained_backbone, loss="focal")
+
+    torch.save(model_task22.state_dict(), "/content/drive/MyDrive/final_project_resources/saved_models/best_resnet18_task22.pt")
+
+    pretrained_backbone = '/content/drive/MyDrive/final_project_resources/pretrained_backbone/ckpt_efficientnet_ep50.pt'
+    backbone = 'efficientnet'
+    print("\nOffsite results with EfficientNet, training full model:\n")
+
+    model_task22 = train_test_task2(backbone, train_csv, val_csv, test_csv, train_image_dir, val_image_dir,
+        test_image_dir, epochs=30, batch_size=16, img_size=256, pretrained_backbone=pretrained_backbone)
+
+    torch.save(model_task22.state_dict(), "/content/drive/MyDrive/final_project_resources/saved_models/best_efficientnet_task22.pt")
+
+    generate_onsite_result_task13(
+        backbone="resnet18",
+        checkpoint_path="/content/drive/MyDrive/final_project_resources/saved_models/best_resnet18_task22.pt",
+        onsite_loader=generate_onsite_loader(),
+        output_csv="/content/drive/MyDrive/final_project_resources/submissions/pred_task22_resnet18.csv"
+    )
+
+    generate_onsite_result_task13(
+        backbone="efficientnet",
+        checkpoint_path="/content/drive/MyDrive/final_project_resources/saved_models/best_efficientnet_task22.pt",
+        onsite_loader=generate_onsite_loader(),
+        output_csv="/content/drive/MyDrive/final_project_resources/submissions/pred_task22_efficientnet.csv"
+    )
 
 
     # Task 3.1
