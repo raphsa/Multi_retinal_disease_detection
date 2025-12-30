@@ -15,6 +15,7 @@ The main script is:
 This code is **designed to run on Google Colab** and uses **Google Drive paths** by default.
 
 The paths in `BMR.py` assume:
+
 ```
 /content/drive/MyDrive/final_project_resources/
 ```
@@ -23,10 +24,12 @@ To run in Colab:
 
 1. Open a new notebook in Colab
 2. Mount Google Drive:
-   ```python
-   from google.colab import drive
-   drive.mount('/content/drive')
-   ```
+
+```python
+from google.colab import drive
+drive.mount('/content/drive')
+```
+
 3. Upload `BMR.py` to Colab in a new cell inside the notebook
 4. Ensure your dataset, CSV files, and pretrained checkpoints follow the same directory structure as defined in the script.
 5. Run the notebook
@@ -36,6 +39,7 @@ To run in Colab:
 If you want to run this outside Colab, you must:
 
 1. Install required libraries (preferably in a virtual environment)
+
 ```bash
 pip install torch torchvision torchaudio
 pip install numpy pandas scikit-learn pillow
@@ -44,6 +48,7 @@ pip install numpy pandas scikit-learn pillow
 All dataset and checkpoint paths are hardcoded for Colab at the top of BMR.py.
 
 You must change them to match your local file system, for example:
+
 ```python
 train_csv = "/local/path/train.csv"
 train_image_dir = "/local/path/images/train"
@@ -52,6 +57,7 @@ saved_models_path = "/local/path/saved_models"
 
 ## Data Structure
 
+```
 final_project_resources/
 │
 ├── train.csv
@@ -74,6 +80,7 @@ final_project_resources/
 ├── saved_models/
 ├── submissions/
 └── checkpoints/
+```
 
 ## Implemented Tasks
 
