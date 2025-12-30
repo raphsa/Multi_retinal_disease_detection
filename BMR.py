@@ -32,11 +32,11 @@ onsite_csv = "/content/drive/MyDrive/final_project_resources/onsite_test_submiss
 onsite_image_dir = "/content/drive/MyDrive/final_project_resources/images/onsite_test"
 
 saved_models_path = "/content/drive/MyDrive/final_project_resources/saved_models"
-# COLAB os.makedirs(saved_models_path, exist_ok=True)
+os.makedirs(saved_models_path, exist_ok=True)
 submissions_path = "/content/drive/MyDrive/final_project_resources/submissions"
-# COLAB os.makedirs(submissions_path, exist_ok=True)
+os.makedirs(submissions_path, exist_ok=True)
 save_dir="/content/drive/MyDrive/final_project_resources/checkpoints"
-# COLAB os.makedirs(save_dir, exist_ok=True)
+os.makedirs(save_dir, exist_ok=True)
 
 
 # Dataset preparation
