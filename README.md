@@ -31,7 +31,7 @@ drive.mount('/content/drive')
 ```
 
 3. Upload `BMR.py` to Colab in a new cell inside the notebook
-4. Ensure your dataset, CSV files, and pretrained checkpoints follow the same directory structure as defined in the script.
+4. Ensure your dataset, CSV files and pretrained checkpoints follow the same directory structure as defined in the script.
 5. Run the notebook
 
 ### Local Execution
