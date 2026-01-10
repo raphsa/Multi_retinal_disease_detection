@@ -2,6 +2,8 @@
 
 This repository contains the implementation used for **multi-label retinal disease classification** (Diabetic Retinopathy, Glaucoma, AMD) using deep learning models such as **ResNet18**, **EfficientNet** and several advanced variants (SE blocks, Multi-Head Attention, ensemble learning and CVAE).
 
+The repository contains the final project for the course [Deep Learning](https://opas.peppi.oulu.fi/en/course/521153S/10905?period=2025-2026) taught at [University of Oulu](https://www.oulu.fi/en) for the a.y. 25/26 by [Prof. LaValle](https://scholar.google.com/citations?hl=en&user=Rh1x7i8AAAAJ).
+
 The main script is:
 
 - `BMR.py`
